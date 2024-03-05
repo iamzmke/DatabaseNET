@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
-namespace Database
+namespace DatabaseLibrary
 {
     public class Database<T>
     {
