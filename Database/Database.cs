@@ -1,78 +1,99 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
-namespace DatabaseLibrary
+public class Database<T>
 {
-    public class Database<T>
+    private readonly string _filePath;
+    private readonly object _fileLock = new object();
+    private readonly JsonSerializer _serializer;
+
+    public Database(string filePath)
     {
-        private readonly string _filePath;
-        private List<T> _data;
+        _filePath = filePath;
+        _serializer = new JsonSerializer();
+    }
 
-        public Database(string filePath)
+    public async Task<List<T>> LoadDataAsync()
+    {
+        List<T> data;
+        lock (_fileLock)
         {
-            _filePath = filePath;
-            _data = new List<T>();
-            LoadDataAsync().Wait();
-        }
-
-        private async Task LoadDataAsync()
-        {
-            if (File.Exists(_filePath))
+            using (var fileStream = new FileStream(_filePath, FileMode.OpenOrCreate, FileAccess.Read, FileShare.Read))
+            using (var reader = new StreamReader(fileStream))
             {
-                string jsonData;
-                using (var fileStream = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true))
-                using (var reader = new StreamReader(fileStream))
-                {
-                    jsonData = await reader.ReadToEndAsync().ConfigureAwait(false);
-                }
-                _data = JsonConvert.DeserializeObject<List<T>>(jsonData);
+                var json = reader.ReadToEnd();
+                data = JsonConvert.DeserializeObject<List<T>>(json);
             }
         }
+        return data ?? new List<T>();
+    }
 
-        private async Task SaveDataAsync()
+    public async Task SaveDataAsync(List<T> data)
+    {
+        lock (_fileLock)
         {
-            string jsonData = JsonConvert.SerializeObject(_data, Formatting.Indented);
-            using (var fileStream = new FileStream(_filePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+            using (var fileStream = new FileStream(_filePath, FileMode.Create, FileAccess.Write, FileShare.None))
             using (var writer = new StreamWriter(fileStream))
             {
-                await writer.WriteAsync(jsonData).ConfigureAwait(false);
+                var json = JsonConvert.SerializeObject(data);
+                writer.Write(json);
             }
-        }
-
-        public async Task AddItemAsync(T item)
-        {
-            _data.Add(item);
-            await SaveDataAsync().ConfigureAwait(false);
-        }
-
-        public async Task RemoveItemAsync(Func<T, bool> predicate)
-        {
-            Predicate<T> convertedPredicate = new Predicate<T>(predicate);
-            _data.RemoveAll(convertedPredicate);
-            await SaveDataAsync().ConfigureAwait(false);
-        }
-
-        public async Task EditItemAsync(Func<T, bool> predicate, Action<T> editAction)
-        {
-            Predicate<T> convertedPredicate = new Predicate<T>(predicate);
-            var itemToEdit = _data.Find(convertedPredicate);
-            if (itemToEdit != null)
-            {
-                editAction(itemToEdit);
-                await SaveDataAsync().ConfigureAwait(false);
-            }
-            else
-            {
-                throw new ArgumentException("Item not found.");
-            }
-        }
-
-        public List<T> GetAllItems()
-        {
-            return _data;
         }
     }
-}
+
+    public async Task AddItemAsync(T item)
+    {
+        var data = await LoadDataAsync();
+        data.Add(item);
+        await SaveDataAsync(data);
+    }
+
+    public async Task RemoveItemAsync(Func<T, bool> predicate)
+    {
+        var data = await LoadDataAsync();
+        Predicate<T> convertedPredicate = new Predicate<T>(predicate);
+        data.RemoveAll(convertedPredicate);
+        await SaveDataAsync(data);
+    }
+
+    public async Task EditItemAsync(Func<T, bool> predicate, Action<T> editAction)
+    {
+        var data = await LoadDataAsync();
+        Predicate<T> convertedPredicate = new Predicate<T>(predicate);
+        var itemToEdit = data.Find(convertedPredicate);
+        if (itemToEdit != null)
+        {
+            editAction(itemToEdit);
+            await SaveDataAsync(data);
+        }
+        else
+        {
+            throw new ArgumentException("Item not found.");
+        }
+    }
+
+    public async Task<List<T>> QueryAsync(Expression<Func<T, bool>> predicate,
+                                          Expression<Func<IEnumerable<T>, IOrderedEnumerable<T>>> orderBy = null,
+                                          int? skip = null,
+                                          int? take = null)
+    {
+        var data = await LoadDataAsync();
+        var query = data.Where(predicate.Compile());
+
+        if (orderBy != null)
+            query = orderBy.Compile()(query);
+
+        if (skip.HasValue)
+            query = query.Skip(skip.Value);
+
+        if (take.HasValue)
+            query = query.Take(take.Value);
+
+        return query.ToList();
+    }
+}   
