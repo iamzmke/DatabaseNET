@@ -2,7 +2,7 @@
 
 # Database.NET
 
-Database.NET is a C# class library designed to provide a simple and efficient way to manage JSON flat-file databases with support for massive datasets, including operations such as adding, removing, and editing items.
+Database.NET is a C# class library designed to provide a simple and efficient way to manage JSON flat-file databases with support for medium datasets, including operations such as adding, removing, and editing items.
 
 ## Features
 
