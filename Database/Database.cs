@@ -3,46 +3,47 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
 public class Database<T>
 {
     private readonly string _filePath;
-    private readonly object _fileLock = new object();
-    private readonly JsonSerializer _serializer;
+    private readonly SemaphoreSlim _fileSemaphore = new SemaphoreSlim(1, 1);
+    private readonly JsonSerializerSettings _serializerSettings = new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.Auto };
 
     public Database(string filePath)
     {
         _filePath = filePath;
-        _serializer = new JsonSerializer();
     }
 
     public async Task<List<T>> LoadDataAsync()
     {
-        List<T> data;
-        lock (_fileLock)
+        string json;
+        await _fileSemaphore.WaitAsync();
+        try
         {
-            using (var fileStream = new FileStream(_filePath, FileMode.OpenOrCreate, FileAccess.Read, FileShare.Read))
-            using (var reader = new StreamReader(fileStream))
-            {
-                var json = reader.ReadToEnd();
-                data = JsonConvert.DeserializeObject<List<T>>(json);
-            }
+            json = await Task.Run(() => File.ReadAllText(_filePath));
         }
-        return data ?? new List<T>();
+        finally
+        {
+            _fileSemaphore.Release();
+        }
+        return JsonConvert.DeserializeObject<List<T>>(json, _serializerSettings) ?? new List<T>();
     }
 
     public async Task SaveDataAsync(List<T> data)
     {
-        lock (_fileLock)
+        var json = JsonConvert.SerializeObject(data, Formatting.Indented, _serializerSettings);
+        await _fileSemaphore.WaitAsync();
+        try
         {
-            using (var fileStream = new FileStream(_filePath, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (var writer = new StreamWriter(fileStream))
-            {
-                var json = JsonConvert.SerializeObject(data);
-                writer.Write(json);
-            }
+            await Task.Run(() => File.WriteAllText(_filePath, json));
+        }
+        finally
+        {
+            _fileSemaphore.Release();
         }
     }
 
